@@ -1,0 +1,2 @@
+include ':logger'
+project(':logger').projectDir = new File('../logger')
