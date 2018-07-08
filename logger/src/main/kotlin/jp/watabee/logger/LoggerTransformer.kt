@@ -11,7 +11,6 @@ import com.android.build.gradle.BaseExtension
 import javassist.ClassPool
 import javassist.Modifier
 import org.gradle.api.Project
-import java.io.File
 import java.util.EnumSet
 
 class LoggerTransformer(private val project: Project) : Transform() {
@@ -81,7 +80,12 @@ class LoggerTransformer(private val project: Project) : Transform() {
     private fun collectClassNames(invocation: TransformInvocation): List<String> =
         invocation.inputs
             .flatMap { it.directoryInputs }
-            .flatMap { listFilesRecursively(it.file).map { file -> file.relativeTo(it.file) } }
+            .flatMap {
+                it.file.walkTopDown()
+                    .filter { file -> file.isFile }
+                    .map { file -> file.relativeTo(it.file) }
+                    .toList()
+            }
             .map { it.path }
             .filter { it.endsWith(SdkConstants.DOT_CLASS) }
             .map { pathToClassName(it) }
@@ -91,19 +95,5 @@ class LoggerTransformer(private val project: Project) : Transform() {
         return path.substring(0, path.length - SdkConstants.DOT_CLASS.length)
             .replace("/", ".")
             .replace("\\", ".")
-    }
-
-    private fun listFilesRecursively(dir: File): Collection<File> {
-        val list = arrayListOf<File>()
-
-        dir.listFiles().forEach { file ->
-            if (file.isDirectory) {
-                list.addAll(listFilesRecursively(file))
-            } else if (file.isFile) {
-                list.add(file)
-            }
-        }
-
-        return list
     }
 }
