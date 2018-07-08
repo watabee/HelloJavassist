@@ -5,6 +5,7 @@ import com.android.build.api.transform.Format
 import com.android.build.api.transform.QualifiedContent
 import com.android.build.api.transform.QualifiedContent.DefaultContentType
 import com.android.build.api.transform.QualifiedContent.Scope
+import com.android.build.api.transform.Status
 import com.android.build.api.transform.Transform
 import com.android.build.api.transform.TransformInvocation
 import com.android.build.gradle.BaseExtension
@@ -20,7 +21,7 @@ class LoggerTransformer(private val project: Project) : Transform() {
     override fun getInputTypes(): MutableSet<QualifiedContent.ContentType> =
         mutableSetOf(DefaultContentType.CLASSES)
 
-    override fun isIncremental(): Boolean = false
+    override fun isIncremental(): Boolean = true
 
     override fun getScopes(): MutableSet<in QualifiedContent.Scope> =
         EnumSet.of(Scope.PROJECT)
@@ -40,16 +41,19 @@ class LoggerTransformer(private val project: Project) : Transform() {
         )
 
         val classPool = createClassPool(transformInvocation)
-        val ctClasses =
-            collectClassNames(transformInvocation).map { className ->
-                log.error("className: $className")
-                classPool.get(className)
-            }
+        val isIncremental = transformInvocation.isIncremental
+        val classNames =
+            if (isIncremental) collectClassNamesForIncrementalBuild(transformInvocation)
+            else collectClassNamesForFullBuild(transformInvocation)
+        val ctClasses = classNames.map { className ->
+            log.debug("className: $className")
+            classPool.get(className)
+        }
 
         ctClasses.flatMap { it.declaredMethods.toList() }
             .filter { !Modifier.isAbstract(it.modifiers) && !Modifier.isNative(it.modifiers) }
             .forEach {
-                log.error("methodName: ${it.name}")
+                log.debug("methodName: ${it.name}")
 
                 it.insertBefore("android.util.Log.e(\"LoggerTransformer\", \"before: ${it.name}\");")
                 it.insertAfter("android.util.Log.e(\"LoggerTransformer\", \"after: ${it.name}\");")
@@ -77,7 +81,7 @@ class LoggerTransformer(private val project: Project) : Transform() {
         return classPool
     }
 
-    private fun collectClassNames(invocation: TransformInvocation): List<String> =
+    private fun collectClassNamesForFullBuild(invocation: TransformInvocation): List<String> =
         invocation.inputs
             .flatMap { it.directoryInputs }
             .flatMap {
@@ -90,6 +94,17 @@ class LoggerTransformer(private val project: Project) : Transform() {
             .filter { it.endsWith(SdkConstants.DOT_CLASS) }
             .map { pathToClassName(it) }
 
+    private fun collectClassNamesForIncrementalBuild(invocation: TransformInvocation): List<String> =
+        invocation.inputs
+            .flatMap { it.directoryInputs }
+            .flatMap {
+                it.changedFiles
+                    .filter { (_, status) -> status != Status.NOTCHANGED && status != Status.REMOVED }
+                    .map { (file, _) -> file.relativeTo(it.file) }
+            }
+            .map { it.path }
+            .filter { it.endsWith(SdkConstants.DOT_CLASS) }
+            .map { pathToClassName(it) }
 
     private fun pathToClassName(path: String): String {
         return path.substring(0, path.length - SdkConstants.DOT_CLASS.length)
